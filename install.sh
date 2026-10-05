@@ -24,7 +24,7 @@ fi
 
 # dependencies: picamera2 for the camera, simplejpeg for the JPEG encoding
 apt-get update
-apt-get install -y --no-install-recommends python3-picamera2 python3-simplejpeg curl
+apt-get install -y --no-install-recommends python3-picamera2 python3-simplejpeg curl unattended-upgrades
 
 # camera: detect the camera module automatically
 if ! grep -q '^camera_auto_detect=1' "${CONFIG_TXT}"; then
@@ -48,6 +48,21 @@ curl -fsSL "https://codeload.github.com/jacksonliam/mjpg-streamer/tar.gz/${MJPG_
 mkdir -p /etc/systemd/timesyncd.conf.d
 printf '[Time]\nNTP=%s\n' "${NTP_SERVER}" > /etc/systemd/timesyncd.conf.d/fau.conf
 systemctl restart systemd-timesyncd
+
+# automatic updates: the default config already takes the Debian security and point release updates,
+# add the Raspberry Pi archive (kernel, firmware, camera stack), reboot at night if needed
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+cat > /etc/apt/apt.conf.d/51fablab-unattended-upgrades <<'EOF'
+// installed by lasercam/install.sh
+Unattended-Upgrade::Origins-Pattern {
+	"origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation";
+};
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:00";
+EOF
 
 # service, keep local settings in /etc/default/lasercam
 [ -e /etc/default/lasercam ] || cp "${REPO_DIR}/lasercam.default" /etc/default/lasercam

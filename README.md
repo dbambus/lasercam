@@ -38,6 +38,10 @@ It installs `python3-picamera2`, enables the camera auto detection in `config.tx
 (same version as before), sets the NTP server to `ntp0.fau.de` (the Pi has no RTC)
 and enables the service `lasercam`.
 
+It also enables automatic updates with `unattended-upgrades`: the Debian security and point release updates
+(default config) and the Raspberry Pi archive (kernel, firmware, camera stack), with a reboot at 04:00 if needed.
+Check with `sudo unattended-upgrade --dry-run --debug`.
+
 Settings (resolution, quality, fps, ...) are in `/etc/default/lasercam`, the install script does not overwrite them.
 
 To update: `cd /opt/lasercam && sudo git pull && sudo ./install.sh`
