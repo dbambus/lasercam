@@ -1,0 +1,6 @@
+# Parameters for /opt/lasercam/lasercam_server.py (after changing: sudo systemctl restart lasercam)
+# Same as the old mjpg-streamer call:
+#   mjpg_streamer -i 'input_raspicam.so -x 3000 -y 2100 -quality 99' -o 'output_http.so -w /usr/share/mjpg_streamer/www'
+# (input_raspicam used its default of 5 fps)
+# Further options: --hflip --vflip --camera N --buffers N --threads N --no-commands -v
+LASERCAM_ARGS="-r 3000x2100 -q 99 -f 5 -p 8080 -w /usr/share/mjpg_streamer/www"

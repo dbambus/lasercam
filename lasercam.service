@@ -1,0 +1,19 @@
+[Unit]
+Description=Lasercam MJPEG stream (mjpg-streamer compatible, port 8080)
+After=network.target
+
+[Service]
+User=lasercam
+Group=video
+StateDirectory=lasercam
+EnvironmentFile=-/etc/default/lasercam
+Environment=PYTHONUNBUFFERED=1
+Environment=LIBCAMERA_LOG_LEVELS=*:WARN
+ExecStart=/usr/bin/python3 /opt/lasercam/lasercam_server.py $LASERCAM_ARGS
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
