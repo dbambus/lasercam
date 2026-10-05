@@ -1,81 +1,58 @@
 # Lasercam
-Raspberry 4 as IP Camera with mjpgstreamer
+Raspberry Pi 4 as IP camera in the laser cutter
 
 running in our lab on lasercam.lab.fablab.uni-erlangen.de
 
+Used by VisiCam on brain (via `visicam-undistort`) and by the monitoring, see
+[brain-docker-config](https://github.com/fau-fablab/brain-docker-config).
+
 # Hardware
 
-Raspberry Pi 4, with camera module
-
+Raspberry Pi 4, with Raspberry Pi Camera Module v2 (IMX219), powered via PoE
 
 # OS
 
-32bit Raspi OS lite
-
-DO NOT use the 64bit stuff, it cost me two hours of angry disappointment because some things don't work yet there (as of 2023-04).
-
-2023-02-21-raspios-bullseye-armhf-lite.img
-
+64bit Raspberry Pi OS Lite (Debian 13 "trixie"), flashed with the Raspberry Pi Imager:
+hostname `lasercam`, user `pi`, enable SSH.
 
 User/PW: see brain:/mnt/secrets/passwords/lasercam.fablab.fau.de.txt
 
-optionally EEPROM update via raspi-config - only if necessary if later something doesnt work
+Until 2026 the lasercam ran mjpg-streamer with `input_raspicam` on 32bit Raspi OS (bullseye),
+see the [old README](https://github.com/fau-fablab/lasercam/blob/2f4cb4b/README.md).
+Current Raspberry Pi OS no longer has the legacy camera stack, so `input_raspicam` does not work anymore.
+`lasercam_server.py` replaces mjpg-streamer: it captures with picamera2 (libcamera) and serves the same
+port, URLs and web interface as mjpg-streamer did, with the same settings (3000x2100, quality 99, 5 fps).
 
-Enable SSH
+# Setup
 
-Start `sudo raspi-config`
-go to Interface - enable "Legacy Camera"
-(this won't work in the future, but in the future hopefully the raspi cam will work like a normal webcam and not require special patched mjpg-streamer)
+Check out this repository in `/opt/lasercam` and run the install script:
 
-# build mjpg-streamer
-```
-ssh pi@lasercam
-# according to README of mjpg-streamer:
-sudo apt-get update
-sudo apt-get -y install git cmake libjpeg9-dev gcc g++ libraspberrypi-dev
-git clone https://github.com/jacksonliam/mjpg-streamer/
-cd mjpg-streamer/
-# currently not helpful, leads to compile error. but may be useful once they fix the errors: apt install libraspberrypi-dev 
-cd mjpg-streamer-experimental
-sudo ln -s /usr /opt/vc # Workaround according to https://github.com/jacksonliam/mjpg-streamer/issues/259, may no longer be needed in the future
-make
+```sh
+sudo apt install -y git
+sudo git clone https://github.com/fau-fablab/lasercam.git /opt/lasercam
+sudo /opt/lasercam/install.sh
 ```
 
-# install as debian package (to allow for clean uninstallation)
-## install fpm (for building the deb package)
-```
-sudo apt install ruby-full ruby-ffi ruby-dev build-essential
-sudo gem install fpm
-```
+It installs `python3-picamera2`, enables the camera auto detection in `config.txt`, creates the user
+`lasercam`, downloads the web interface of mjpg-streamer to `/usr/share/mjpg_streamer/www`
+(same version as before), sets the NTP server to `ntp0.fau.de` (the Pi has no RTC)
+and enables the service `lasercam`.
 
-## build and install deb package
-```
-./makedeb.sh
-sudo dpkg -i *.deb
-```
+Settings (resolution, quality, fps, ...) are in `/etc/default/lasercam`, the install script does not overwrite them.
 
-## Debugging notes
-```
-# PLEASE IGNORE - ONLY FOR DEBUGGING
-# sudo apt-get -y install libcamera-apps v4l-utils # testing, may no longer be needed in the future
-# v4l2-ctl --list-devices
-# ...
-```
+To update: `cd /opt/lasercam && sudo git pull && sudo ./install.sh`
 
-## setup system service (autostart)
+```sh
+systemctl status lasercam
+journalctl -u lasercam -f
 ```
-sudo cp /lib/systemd/system/mjpg_streamer@.service /lib/systemd/system/mjpg_streamer_pi.service
-sudo -e /lib/systemd/system/mjpg_streamer_pi.service
-# change the ExecStart line to:      ExecStart=/usr/bin/mjpg_streamer -i 'input_raspicam.so -x 3000 -y 2100 -quality 99' -o 'output_http.so -w /usr/share/mjpg_streamer/www'
-sudo systemctl daemon-reload
-sudo systemctl start mjpg_streamer_pi
-sudo systemctl status mjpg_streamer_pi
-
-# start automatically after reboot:
-sudo systemctl enable mjpg_streamer_pi
-```
-
 
 ## Usage
 
 Fetch JPG from:  http://lasercam.lab.fablab.uni-erlangen.de:8080/?action=snapshot   (URL is only accessible from internal network)
+
+MJPEG stream: http://lasercam.lab.fablab.uni-erlangen.de:8080/?action=stream
+
+Camera settings: http://lasercam.lab.fablab.uni-erlangen.de:8080/control.htm (as in mjpg-streamer, also via
+`?action=command&id=...&value=...`, IDs see `/input.json`). Changes are saved in `/var/lib/lasercam/controls.json`
+and survive a restart, "Reset to defaults" reverts them. Careful: VisiCam detects the markers in the camera image.
