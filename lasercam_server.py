@@ -248,6 +248,40 @@ class FrameBuffer(io.BufferedIOBase):
             return self.seq, self.frame, self.timestamp
 
 
+class OnDemandEncoder:
+    """Runs the JPEG encoder only while clients fetch frames, to save CPU.
+
+    The camera keeps running, so exposure and white balance stay settled and the
+    first frame after a pause comes without delay.
+    """
+
+    def __init__(self, picam2, encoder, frames, idle_timeout):
+        self.picam2, self.encoder, self.frames = picam2, encoder, frames
+        self.idle_timeout = idle_timeout
+        self._lock = threading.Lock()
+        self.running = True  # started by start_camera()
+        self.last_use = time.monotonic()
+        self.stale_seq = 0  # frames up to this one are from before the last pause
+
+    def touch(self):
+        """Marks a client fetching frames, restarts the encoder if paused."""
+        with self._lock:
+            self.last_use = time.monotonic()
+            if not self.running:
+                self.picam2.start_encoder(self.encoder)
+                self.running = True
+                log.info("Client connected - JPEG encoder resumed")
+
+    def stop_if_idle(self):
+        with self._lock:
+            if (self.running and self.idle_timeout > 0
+                    and time.monotonic() - self.last_use > self.idle_timeout):
+                self.picam2.stop_encoder(self.encoder)
+                self.running = False
+                self.stale_seq = self.frames.seq
+                log.info("No client for %d s - JPEG encoder paused", self.idle_timeout)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     timeout = 30  # drop stalled clients after 30 s
@@ -290,19 +324,21 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def send_stream(self):
-        frames = self.server.frames
+        frames, on_demand = self.server.frames, self.server.on_demand
+        on_demand.touch()
         self.send_response(200)
         self.send_std_headers()
         self.send_header("Content-Type", f"multipart/x-mixed-replace;boundary={BOUNDARY}")
         self.end_headers()
         self.wfile.write(f"--{BOUNDARY}\r\n".encode())
         log.info("Stream started for %s", self.client_address[0])
-        seq = 0
+        seq = on_demand.stale_seq
         try:
             while True:
                 got = frames.wait_for_frame(seq)
                 if got is None:
                     break
+                on_demand.touch()
                 seq, frame, ts = got
                 self.wfile.write(
                     f"Content-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n"
@@ -314,7 +350,9 @@ class Handler(BaseHTTPRequestHandler):
             log.info("Stream ended for %s", self.client_address[0])
 
     def send_snapshot(self):
-        got = self.server.frames.wait_for_frame(0)
+        on_demand = self.server.on_demand
+        on_demand.touch()
+        got = self.server.frames.wait_for_frame(on_demand.stale_seq)
         if got is None:
             self.send_error(503, "no frame available")
             return
@@ -424,12 +462,14 @@ def start_camera(args, frames):
     return picam2, encoder, cameras[args.camera].get("Model", "camera")
 
 
-def watchdog(frames, timeout):
-    """Exits the process if the camera stops delivering frames (systemd restarts it)."""
+def watchdog(frames, on_demand, timeout):
+    """Pauses the idle encoder and exits the process if the camera stops delivering
+    frames while it runs (systemd restarts it)."""
     last_seq, since = -1, time.monotonic()
     while True:
         time.sleep(1)
-        if frames.seq != last_seq:
+        on_demand.stop_if_idle()
+        if frames.seq != last_seq or not on_demand.running:
             last_seq, since = frames.seq, time.monotonic()
         elif time.monotonic() - since > timeout:
             log.error("No frame from the camera for %d s - exiting for restart", timeout)
@@ -457,6 +497,8 @@ def main():
     p.add_argument("--buffers", type=int, default=4)
     p.add_argument("--threads", type=int, default=4, help="threads for JPEG encoding")
     p.add_argument("--watchdog", type=int, default=20, help="seconds without a frame until restart")
+    p.add_argument("--idle-timeout", type=int, default=30,
+                   help="pause JPEG encoding after this many seconds without a client (0 = never)")
     p.add_argument("--state-file", default="/var/lib/lasercam/controls.json",
                    help="settings changed via control.htm are saved here")
     p.add_argument("--no-commands", action="store_true", help="disable ?action=command (control.htm)")
@@ -471,10 +513,12 @@ def main():
     frames = FrameBuffer()
     picam2, encoder, model = start_camera(args, frames)
     controls = CameraControls(picam2, encoder, args)
-    threading.Thread(target=watchdog, args=(frames, args.watchdog), daemon=True).start()
+    on_demand = OnDemandEncoder(picam2, encoder, frames, args.idle_timeout)
+    threading.Thread(target=watchdog, args=(frames, on_demand, args.watchdog), daemon=True).start()
 
     server = make_server(args.port)
     server.frames = frames
+    server.on_demand = on_demand
     server.controls = controls
     server.commands_enabled = not args.no_commands
     server.program_json = {
