@@ -397,7 +397,7 @@ def make_server(port):
 
 
 def start_camera(args, frames):
-    from libcamera import Transform
+    from libcamera import ColorSpace, Transform
     from picamera2 import Picamera2
     from picamera2.encoders import JpegEncoder
     from picamera2.outputs import FileOutput
@@ -411,7 +411,8 @@ def start_camera(args, frames):
     picam2 = Picamera2(args.camera)
     frame_us = int(1_000_000 / args.fps)
     config = picam2.create_video_configuration(
-        main={"size": (args.width, args.height)},
+        main={"size": (args.width, args.height), "format": "YUV420"},
+        colour_space=ColorSpace.Sycc(),
         transform=Transform(hflip=args.hflip, vflip=args.vflip),
         buffer_count=args.buffers,
         controls={"FrameDurationLimits": (frame_us, frame_us)},
