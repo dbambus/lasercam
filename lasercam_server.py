@@ -13,7 +13,6 @@ the same HTTP endpoints as mjpg-streamer/output_http:
 """
 import argparse
 import errno
-import io
 import json
 import math
 import logging
@@ -218,33 +217,33 @@ class CameraControls:
         return {"controls": controls, "formats": []}
 
 
-class FrameBuffer(io.BufferedIOBase):
-    """Holds the latest encoded JPEG and wakes up waiting clients."""
+class FrameBuffer:
+    """Encodes a camera frame only when a client asks for one, so no CPU is spent on
+    frames nobody fetches (VisiCut only fetches snapshots). Clients waiting at the
+    same time share the frame."""
 
-    def __init__(self):
-        super().__init__()
-        self._cond = threading.Condition()
+    def __init__(self, picam2, encoder, timeout):
+        self.picam2, self.encoder, self.timeout = picam2, encoder, timeout
+        self._lock = threading.Lock()
         self.frame = None
         self.timestamp = 0.0
         self.seq = 0
 
-    def writable(self):
-        return True
-
-    def write(self, buf):
-        frame = bytes(buf)
-        with self._cond:
-            self.frame = frame
-            self.timestamp = time.time()
-            self.seq += 1
-            self._cond.notify_all()
-        return len(frame)
-
-    def wait_for_frame(self, last_seq=0, timeout=10.0):
-        """Returns (seq, jpeg, timestamp) as soon as a frame newer than last_seq is available."""
-        with self._cond:
-            if not self._cond.wait_for(lambda: self.seq != last_seq, timeout):
-                return None
+    def wait_for_frame(self, last_seq):
+        """Returns (seq, jpeg, timestamp) of a frame newer than last_seq."""
+        with self._lock:
+            if self.seq == last_seq:
+                try:
+                    request = self.picam2.capture_request(wait=self.timeout)
+                except TimeoutError:
+                    log.error("No frame from the camera for %d s - exiting for restart", self.timeout)
+                    os._exit(1)
+                try:
+                    self.timestamp = time.time()
+                    self.frame = self.encoder.encode_func(request, "main")
+                finally:
+                    request.release()
+                self.seq += 1
             return self.seq, self.frame, self.timestamp
 
 
@@ -297,13 +296,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(f"--{BOUNDARY}\r\n".encode())
         log.info("Stream started for %s", self.client_address[0])
-        seq = 0
+        seq = frames.seq
         try:
             while True:
-                got = frames.wait_for_frame(seq)
-                if got is None:
-                    break
-                seq, frame, ts = got
+                seq, frame, ts = frames.wait_for_frame(seq)
                 self.wfile.write(
                     f"Content-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n"
                     f"X-Timestamp: {ts:.6f}\r\n\r\n".encode()
@@ -314,11 +310,8 @@ class Handler(BaseHTTPRequestHandler):
             log.info("Stream ended for %s", self.client_address[0])
 
     def send_snapshot(self):
-        got = self.server.frames.wait_for_frame(0)
-        if got is None:
-            self.send_error(503, "no frame available")
-            return
-        _, frame, ts = got
+        frames = self.server.frames
+        _, frame, ts = frames.wait_for_frame(frames.seq)
         self.send_response(200)
         self.send_std_headers()
         self.send_header("Content-Type", "image/jpeg")
@@ -396,11 +389,10 @@ def make_server(port):
         return ThreadingHTTPServer(("0.0.0.0", port), Handler)
 
 
-def start_camera(args, frames):
+def start_camera(args):
     from libcamera import Transform
     from picamera2 import Picamera2
     from picamera2.encoders import JpegEncoder
-    from picamera2.outputs import FileOutput
 
     cameras = Picamera2.global_camera_info()
     if not cameras:
@@ -419,21 +411,9 @@ def start_camera(args, frames):
     picam2.configure(config)
     active = picam2.camera_configuration()
     log.info("Camera configured: main=%s sensor=%s", active.get("main"), active.get("sensor"))
-    encoder = JpegEncoder(q=args.quality, num_threads=args.threads)
-    picam2.start_recording(encoder, FileOutput(frames))
+    encoder = JpegEncoder(q=args.quality)
+    picam2.start()
     return picam2, encoder, cameras[args.camera].get("Model", "camera")
-
-
-def watchdog(frames, timeout):
-    """Exits the process if the camera stops delivering frames (systemd restarts it)."""
-    last_seq, since = -1, time.monotonic()
-    while True:
-        time.sleep(1)
-        if frames.seq != last_seq:
-            last_seq, since = frames.seq, time.monotonic()
-        elif time.monotonic() - since > timeout:
-            log.error("No frame from the camera for %d s - exiting for restart", timeout)
-            os._exit(1)
 
 
 def parse_resolution(value):
@@ -455,7 +435,6 @@ def main():
     p.add_argument("--hflip", action="store_true")
     p.add_argument("--vflip", action="store_true")
     p.add_argument("--buffers", type=int, default=4)
-    p.add_argument("--threads", type=int, default=4, help="threads for JPEG encoding")
     p.add_argument("--watchdog", type=int, default=20, help="seconds without a frame until restart")
     p.add_argument("--state-file", default="/var/lib/lasercam/controls.json",
                    help="settings changed via control.htm are saved here")
@@ -468,10 +447,9 @@ def main():
                         format="%(levelname)s %(message)s")
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
-    frames = FrameBuffer()
-    picam2, encoder, model = start_camera(args, frames)
+    picam2, encoder, model = start_camera(args)
+    frames = FrameBuffer(picam2, encoder, args.watchdog)
     controls = CameraControls(picam2, encoder, args)
-    threading.Thread(target=watchdog, args=(frames, args.watchdog), daemon=True).start()
 
     server = make_server(args.port)
     server.frames = frames
@@ -490,7 +468,7 @@ def main():
     try:
         server.serve_forever()
     finally:
-        picam2.stop_recording()
+        picam2.stop()
 
 
 if __name__ == "__main__":
