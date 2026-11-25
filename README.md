@@ -68,4 +68,6 @@ MJPEG stream: http://lasercam.lab.fablab.uni-erlangen.de:8080/?action=stream
 
 Camera settings: http://lasercam.lab.fablab.uni-erlangen.de:8080/control.htm (as in mjpg-streamer, also via
 `?action=command&id=...&value=...`, IDs see `/input.json`). Changes are saved in `/var/lib/lasercam/controls.json`
-and survive a restart, "Reset to defaults" reverts them. Careful: VisiCam detects the markers in the camera image.
+and survive a restart, "Reset to defaults" reverts them.
+The focus of the v3 is fixed with `--lens-position` in `/etc/default/lasercam`, "Lens Position" in
+control.htm overrides it until "Reset to defaults". Careful: VisiCam detects the markers in the camera image.
