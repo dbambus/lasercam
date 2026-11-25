@@ -1,6 +1,6 @@
 # Parameters for /opt/lasercam/lasercam_server.py (after changing: sudo systemctl restart lasercam)
-# Same as the old mjpg-streamer call:
-#   mjpg_streamer -i 'input_raspicam.so -x 3000 -y 2100 -quality 99' -o 'output_http.so -w /usr/share/mjpg_streamer/www'
-# (input_raspicam used its default of 5 fps)
+# Camera Module v3 (IMX708): full sensor 4608x2592 (16:9). A resolution with another aspect ratio
+# crops the image, e.g. 3000x2100 (as with the v2 and mjpg-streamer before) cuts off the sides of the bed.
+# Quality 90 instead of 99 halves the size of the JPEGs and lowers the CPU load, without visible difference.
 # Further options: --hflip --vflip --camera N --buffers N --threads N --no-commands -v
-LASERCAM_ARGS="-r 3000x2100 -q 99 -f 5 -p 8080 -w /usr/share/mjpg_streamer/www"
+LASERCAM_ARGS="-r 4608x2592 -q 90 -f 5 -p 8080 -w /usr/share/mjpg_streamer/www"

@@ -8,7 +8,14 @@ Used by VisiCam on brain (via `visicam-undistort`) and by the monitoring, see
 
 # Hardware
 
-Raspberry Pi 4, with Raspberry Pi Camera Module v2 (IMX219), powered via PoE
+Raspberry Pi 4, with Raspberry Pi Camera Module v3 (IMX708), powered via PoE
+
+Until November 2026 it had a Camera Module v2 (IMX219). The v3 has a 16:9 sensor and a different lens,
+so after the change the camera calibration of VisiCam (`visicam-undistort` on brain) has to be done again.
+
+The PoE supply has to deliver enough power: with too little the Pi throttles the CPU to 600 MHz and the
+stream gets slower. Check with `vcgencmd get_throttled` (`0x0` is fine, bit 0 = under-voltage now,
+bit 2 = throttled now) and `vcgencmd measure_clock arm`.
 
 # OS
 
@@ -21,7 +28,8 @@ Until 2026 the lasercam ran mjpg-streamer with `input_raspicam` on 32bit Raspi O
 see the [old README](https://github.com/fau-fablab/lasercam/blob/2f4cb4b/README.md).
 Current Raspberry Pi OS no longer has the legacy camera stack, so `input_raspicam` does not work anymore.
 `lasercam_server.py` replaces mjpg-streamer: it captures with picamera2 (libcamera) and serves the same
-port, URLs and web interface as mjpg-streamer did, with the same settings (3000x2100, quality 99, 5 fps).
+port, URLs and web interface as mjpg-streamer did. With the v2 it ran with the same settings as before
+(3000x2100, quality 99, 5 fps), with the v3 it uses the full sensor (4608x2592, quality 90, 5 fps).
 
 # Setup
 
@@ -43,6 +51,7 @@ It also enables automatic updates with `unattended-upgrades`: the Debian securit
 Check with `sudo unattended-upgrade --dry-run --debug`.
 
 Settings (resolution, quality, fps, ...) are in `/etc/default/lasercam`, the install script does not overwrite them.
+After changes to `lasercam.default` (e.g. the camera v3 settings) compare it with `/etc/default/lasercam` by hand.
 
 To update: `cd /opt/lasercam && sudo git pull && sudo ./install.sh`
 

@@ -442,13 +442,13 @@ def parse_resolution(value):
         w, h = value.lower().split("x")
         return int(w), int(h)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"invalid resolution: {value!r} (expected e.g. 3000x2100)")
+        raise argparse.ArgumentTypeError(f"invalid resolution: {value!r} (expected e.g. 4608x2592)")
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("-r", "--resolution", type=parse_resolution, default=(3000, 2100))
-    p.add_argument("-q", "--quality", type=int, default=99, help="JPEG quality 1-100")
+    p.add_argument("-r", "--resolution", type=parse_resolution, default=(4608, 2592))
+    p.add_argument("-q", "--quality", type=int, default=90, help="JPEG quality 1-100")
     p.add_argument("-f", "--fps", type=float, default=5)
     p.add_argument("-p", "--port", type=int, default=8080)
     p.add_argument("-w", "--www", default="/usr/share/mjpg_streamer/www")
